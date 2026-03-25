@@ -32,7 +32,6 @@ use strict;
 use warnings;
 use bytes;
 use Getopt::Long;
-use Time::HiRes qw(usleep);
 
 my %opts = (
     device            => undef,
@@ -141,7 +140,6 @@ package Voltcraft::SEM;
 use Errno   qw(EAGAIN EINPROGRESS);
 use Fcntl   qw(O_NONBLOCK F_SETFL F_GETFL);
 use Socket  qw(SOCK_SEQPACKET SOL_SOCKET SO_ERROR);
-use Time::HiRes qw(usleep);
 
 use constant {
     AF_BLUETOOTH              => 31,
