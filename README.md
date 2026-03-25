@@ -8,6 +8,9 @@ Perl script for controlling a **Voltcraft SEM-6000** smart wall socket via Bluet
 - Read live meter data: voltage, current, power, frequency, power factor, total energy
 - Turn socket on/off
 - Toggle socket state
+- Read device name/description
+- Rename device custom name
+- Change device PIN
 - PIN authentication
 - Verbose/debug hex dump mode
 
@@ -35,6 +38,9 @@ If no action is given, `--status --meter` is the default.
 | `--on` | Turn socket on |
 | `--off` | Turn socket off |
 | `--toggle` | Read current state and switch to opposite |
+| `--name` | Print the stored/custom device name (with BLE name fallback) |
+| `--set-name TXT` | Set custom device name (1..18 printable ASCII chars) |
+| `--set-pin NNNN` | Change device PIN to a new 4-digit PIN |
 
 ### Options
 
@@ -78,7 +84,32 @@ Only needed if your device firmware differs from the standard SEM-6000 profile.
 
 # Toggle with debug output
 ./voltcraft.pl -d B3:00:00:00:73:C0 --toggle -v
+
+# Read name and meter
+./voltcraft.pl -d B3:00:00:00:73:C0 --name --meter
+
+# Rename device
+./voltcraft.pl -d B3:00:00:00:73:C0 --pin 0000 --set-name "bureau Cindu"
+
+# Change PIN from 0000 to 1234
+./voltcraft.pl -d B3:00:00:00:73:C0 --pin 0000 --set-pin 1234
 ```
+
+## Security
+
+**⚠️ All SEM-6000 devices ship with default PIN `0000`.** We strongly recommend immediately changing the PIN to prevent unauthorized control:
+
+```bash
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --pin 0000 --set-pin 1234
+```
+
+After changing, always use the new PIN:
+
+```bash
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --pin 1234 --on
+```
+
+**Note:** BLE offers no encryption in the device's default profile. Anyone in Bluetooth range can discover and connect to devices with the default PIN. Keep your PIN private.
 
 ## Protocol notes
 
@@ -96,6 +127,9 @@ All communication uses BLE ATT over a raw Linux L2CAP socket (CID 4). Responses 
 | Command | Payload bytes |
 |---|---|
 | Auth | `0x17 0x00 0x00 <p0 p1 p2 p3> 0x00 0x00 0x00 0x00` |
+| Get name | `0x01 0x00 0x00 0x00` |
+| Set name | `0x02 0x00 <name bytes padded to 18> 0x00 0x00` |
+| Change PIN | `0x17 0x00 0x01 <new p0 p1 p2 p3> <old p0 p1 p2 p3>` |
 | Measurement | `0x04 0x00 0x00 0x00` |
 | Switch ON | `0x03 0x00 0x01 0x00 0x00` |
 | Switch OFF | `0x03 0x00 0x00 0x00 0x00` |
