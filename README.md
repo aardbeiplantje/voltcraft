@@ -117,4 +117,4 @@ Protocol reference: <https://github.com/Heckie75/voltcraft-sem-6000/blob/master/
 
 ## License
 
-MIT
+[The Unlicense](LICENSE) — public domain, no restrictions.
