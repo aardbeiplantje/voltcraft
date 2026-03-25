@@ -45,7 +45,7 @@ my %opts = (
     wait_notify_ms    => 3000,
 );
 
-my ($do_status, $do_meter, $do_on, $do_off, $do_toggle) = (0) x 5;
+my ($do_status, $do_meter, $do_on, $do_off, $do_toggle, $do_name) = (0) x 6;
 
 GetOptions(
     'device|d=s'          => \$opts{device},
@@ -61,6 +61,7 @@ GetOptions(
     'on'                  => \$do_on,
     'off'                 => \$do_off,
     'toggle'              => \$do_toggle,
+    'name'               => \$do_name,
     'debug|v+'            => \$opts{debug},
     'help|h'              => sub { print_usage(); exit 0; },
 ) or do { print_usage(); exit 1; };
@@ -93,7 +94,7 @@ for my $k (qw(service_uuid command_char_uuid notify_char_uuid)) {
 }
 
 # Default: show both if nothing requested
-if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle) {
+if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle && !$do_name) {
     $do_status = $do_meter = 1;
 }
 
@@ -104,6 +105,7 @@ exit $sem->run(
     on     => $do_on,
     off    => $do_off,
     toggle => $do_toggle,
+    name   => $do_name,
 );
 
 # ============================================================================
@@ -139,6 +141,7 @@ use constant {
     GATT_CHARACTERISTIC_UUID  => 0x2803,
 
     # SEM-6000 command payload IDs
+    SEM_CMD_GET_NAME          => 0x01,
     SEM_CMD_AUTH              => 0x17,
     SEM_CMD_SWITCH            => 0x03,
     SEM_CMD_MEASURE           => 0x04,
@@ -197,6 +200,18 @@ sub run {
     }
 
     my $rc = 0;
+
+    if ($todo{name}) {
+        my $name = $self->get_name();
+        if (defined $name && length($name)) {
+            print "Name:         $name\n";
+        } elsif (defined $name) {
+            print "Name:         (not set)\n";
+        } else {
+            print STDERR "ERROR: Could not read device name\n";
+            $rc = 1;
+        }
+    }
 
     # Toggle: must measure first to learn current state, then switch.
     if ($todo{toggle}) {
@@ -528,6 +543,102 @@ sub measure {
     };
 }
 
+# Fetch the device's stored name/description.
+# Strategy (each tried in order until a non-empty name is found):
+#  1. SEM-6000 custom settings command (0x01): user-defined name from companion app.
+#     Older firmware (hw<3) has extra fields before the name, so scan for the first
+#     contiguous run of printable ASCII bytes rather than assuming a fixed offset.
+#  2. BLE Generic Access Device Name (UUID 0x2A00).
+#  3. BlueZ filesystem cache (~/.var/lib/bluetooth or /var/lib/bluetooth).
+sub get_name {
+    my ($self) = @_;
+
+    my $rsp = $self->command_req(SEM_CMD_GET_NAME, 0x00, 0x00, 0x00);
+    if (defined $rsp && @$rsp >= 3 && $rsp->[0] == SEM_CMD_GET_NAME) {
+        $self->debug('GET_NAME rsp: ' . join(' ', map { sprintf '%02X', $_ } @$rsp));
+        # Scan from offset 2 for the first run of printable ASCII chars.
+        # Non-name fields (relay state, time, flags) are typically low control bytes.
+        my $name = '';
+        for my $i (2..$#$rsp) {
+            my $b = $rsp->[$i];
+            if ($b >= 0x20 && $b <= 0x7E) {
+                $name .= chr($b);
+            } elsif (length $name) {
+                last;  # end of printable run
+            }
+        }
+        return $name if length($name);
+        $self->debug('SEM custom name is empty, trying BLE Device Name');
+    } else {
+        $self->debug('SEM get-name command failed: '
+            . (defined $rsp ? join(' ', map { sprintf '%02X', $_ } @$rsp) : 'no response'));
+    }
+
+    # Fall back: read Generic Access Device Name characteristic (UUID 0x2A00).
+    my $ble_name = $self->read_ble_device_name();
+    return $ble_name if defined $ble_name && length $ble_name;
+
+    # Last resort: BlueZ device cache on disk (populated from prior BLE scans).
+    return $self->read_bluez_cached_name();
+}
+
+# Read the BLE Generic Access Device Name (UUID 0x2A00) using ATT_READ_BY_TYPE_REQ.
+# Loops to discard any stale ATT_HANDLE_VALUE_NOTIF packets left in the socket.
+# Response layout: [op(1)][item_len(1)][handle(2)][value...]
+sub read_ble_device_name {
+    my ($self) = @_;
+    return undef unless $self->{socket};
+    syswrite($self->{socket},
+        pack('C S< S< S<', ATT_READ_BY_TYPE_REQ, 0x0001, 0xFFFF, 0x2A00))
+        or return undef;
+
+    my $deadline = time() + 2.0;
+    while (1) {
+        my $remaining = $deadline - time();
+        last if $remaining <= 0;
+        my $rin = '';
+        vec($rin, fileno($self->{socket}), 1) = 1;
+        my $n = select(my $rout = $rin, undef, undef, $remaining);
+        last unless defined($n) && $n > 0;
+        my ($raw, $r) = ('');
+        $r = sysread($self->{socket}, $raw, 512);
+        last unless defined($r) && $r > 0;
+        my $op = ord(substr($raw, 0, 1));
+        if ($op == ATT_READ_BY_TYPE_RSP) {
+            return '' if length($raw) < 5;
+            # value starts after [opcode(1), item_len(1), handle(2)]
+            my $name = substr($raw, 4);
+            $name =~ s/\x00.*//s;
+            $self->debug("BLE Device Name: '$name'");
+            return $name;
+        }
+        $self->debug(sprintf('read_ble_device_name: skipping opcode 0x%02X', $op));
+    }
+    return undef;
+}
+
+# Read the device name from the BlueZ on-disk cache.
+# BlueZ writes discovered device info to /var/lib/bluetooth/<adapter>/<device>/info.
+# Works when the device has previously been scanned or connected via BlueZ.
+sub read_bluez_cached_name {
+    my ($self) = @_;
+    my $dev = uc($self->{device});
+    for my $dir (glob('/var/lib/bluetooth/*/')) {
+        my $info = "${dir}${dev}/info";
+        open(my $fh, '<', $info) or next;
+        while (<$fh>) {
+            if (/^Name=(.+)/) {
+                chomp(my $name = $1);
+                close $fh;
+                $self->debug("BlueZ cached name: '$name'");
+                return $name;
+            }
+        }
+        close $fh;
+    }
+    return undef;
+}
+
 # Send switch on/off command.
 # Payload: [0x03 0x00 <1|0> 0x00 0x00]
 # Reference check: rsp[0]==0x03 && rsp[2]==0 (rsp[1] is intentionally not checked).
@@ -560,6 +671,7 @@ sub print_usage {
 Usage: $0 -d AA:BB:CC:DD:EE:FF [--pin NNNN] [actions] [options]
 
 Actions (one or more; defaults to --status --meter):
+  --name          Show the device's stored name/description
   --status        Show switch state (ON/OFF)
   --meter         Show voltage, current, power, frequency, power factor
   --on            Turn socket on
