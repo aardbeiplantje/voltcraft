@@ -30,6 +30,7 @@
 
 use strict;
 use warnings;
+use bytes;
 use Getopt::Long;
 use Time::HiRes qw(usleep);
 
@@ -46,6 +47,7 @@ my %opts = (
 );
 
 my ($do_status, $do_meter, $do_on, $do_off, $do_toggle, $do_name) = (0) x 6;
+my $set_name;
 
 GetOptions(
     'device|d=s'          => \$opts{device},
@@ -62,6 +64,7 @@ GetOptions(
     'off'                 => \$do_off,
     'toggle'              => \$do_toggle,
     'name'               => \$do_name,
+    'set-name=s'         => \$set_name,
     'debug|v+'            => \$opts{debug},
     'help|h'              => sub { print_usage(); exit 0; },
 ) or do { print_usage(); exit 1; };
@@ -94,8 +97,19 @@ for my $k (qw(service_uuid command_char_uuid notify_char_uuid)) {
 }
 
 # Default: show both if nothing requested
-if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle && !$do_name) {
+if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle && !$do_name && !defined($set_name)) {
     $do_status = $do_meter = 1;
+}
+
+if (defined $set_name) {
+    if (length($set_name) < 1 || length($set_name) > 18) {
+        print STDERR "Error: --set-name must be 1..18 characters\n";
+        exit 1;
+    }
+    if ($set_name =~ /[^\x20-\x7E]/) {
+        print STDERR "Error: --set-name only supports printable ASCII (space through ~)\n";
+        exit 1;
+    }
 }
 
 my $sem = Voltcraft::SEM->new(%opts);
@@ -106,6 +120,7 @@ exit $sem->run(
     off    => $do_off,
     toggle => $do_toggle,
     name   => $do_name,
+    set_name => $set_name,
 );
 
 # ============================================================================
@@ -200,6 +215,10 @@ sub run {
     }
 
     my $rc = 0;
+
+    if (defined $todo{set_name}) {
+        $self->set_name($todo{set_name}) or $rc = 1;
+    }
 
     if ($todo{name}) {
         my $name = $self->get_name();
@@ -639,6 +658,33 @@ sub read_bluez_cached_name {
     return undef;
 }
 
+# Set the device custom name.
+# Payload: [0x02 0x00 <name bytes padded to 18> 0x00 0x00]
+# Success response: [0x02 0x00 0x00]
+sub set_name {
+    my ($self, $name) = @_;
+    return 0 unless defined $name;
+
+    my @name_bytes = map { ord($_) } split(//, $name);
+    if (@name_bytes > 18) {
+        print STDERR "ERROR: Name too long (max 18 chars)\n";
+        return 0;
+    }
+    push @name_bytes, (0) x (18 - scalar(@name_bytes));
+
+    my $rsp = $self->command_req(0x02, 0x00, @name_bytes, 0x00, 0x00);
+    my $ok  = defined($rsp) && @$rsp >= 3
+              && $rsp->[0] == 0x02
+              && $rsp->[1] == 0x00
+              && $rsp->[2] == 0x00;
+    if ($ok) {
+        print "Renamed:      $name\n";
+    } else {
+        print STDERR "ERROR: Rename command failed\n";
+    }
+    return $ok;
+}
+
 # Send switch on/off command.
 # Payload: [0x03 0x00 <1|0> 0x00 0x00]
 # Reference check: rsp[0]==0x03 && rsp[2]==0 (rsp[1] is intentionally not checked).
@@ -672,6 +718,7 @@ Usage: $0 -d AA:BB:CC:DD:EE:FF [--pin NNNN] [actions] [options]
 
 Actions (one or more; defaults to --status --meter):
   --name          Show the device's stored name/description
+    --set-name TXT  Rename device custom name (1..18 printable ASCII chars)
   --status        Show switch state (ON/OFF)
   --meter         Show voltage, current, power, frequency, power factor
   --on            Turn socket on
