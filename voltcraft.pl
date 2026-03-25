@@ -99,7 +99,8 @@ for my $k (qw(service_uuid command_char_uuid notify_char_uuid)) {
 }
 
 # Default: show both if nothing requested
-if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle && !$do_name && !defined($set_name)) {
+if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle && !$do_name
+    && !defined($set_name) && !defined($set_pin)) {
     $do_status = $do_meter = 1;
 }
 
