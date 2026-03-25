@@ -48,6 +48,7 @@ my %opts = (
 
 my ($do_status, $do_meter, $do_on, $do_off, $do_toggle, $do_name) = (0) x 6;
 my $set_name;
+my $set_pin;
 
 GetOptions(
     'device|d=s'          => \$opts{device},
@@ -65,6 +66,7 @@ GetOptions(
     'toggle'              => \$do_toggle,
     'name'               => \$do_name,
     'set-name=s'         => \$set_name,
+    'set-pin=s'          => \$set_pin,
     'debug|v+'            => \$opts{debug},
     'help|h'              => sub { print_usage(); exit 0; },
 ) or do { print_usage(); exit 1; };
@@ -112,6 +114,11 @@ if (defined $set_name) {
     }
 }
 
+if (defined $set_pin && $set_pin !~ /^\d{4}$/) {
+    print STDERR "Error: --set-pin must be exactly 4 digits\n";
+    exit 1;
+}
+
 my $sem = Voltcraft::SEM->new(%opts);
 exit $sem->run(
     status => $do_status,
@@ -121,6 +128,7 @@ exit $sem->run(
     toggle => $do_toggle,
     name   => $do_name,
     set_name => $set_name,
+    set_pin  => $set_pin,
 );
 
 # ============================================================================
@@ -218,6 +226,10 @@ sub run {
 
     if (defined $todo{set_name}) {
         $self->set_name($todo{set_name}) or $rc = 1;
+    }
+
+    if (defined $todo{set_pin}) {
+        $self->set_pin($todo{set_pin}) or $rc = 1;
     }
 
     if ($todo{name}) {
@@ -685,6 +697,36 @@ sub set_name {
     return $ok;
 }
 
+# Change device PIN.
+# Payload: [0x17 0x00 0x01 <new pin digits> <current pin digits>]
+# Success response starts with [0x17 0x00 0x00 0x01].
+sub set_pin {
+    my ($self, $new_pin) = @_;
+    return 0 unless defined $new_pin;
+
+    unless ($new_pin =~ /^\d{4}$/) {
+        print STDERR "ERROR: New PIN must be exactly 4 digits\n";
+        return 0;
+    }
+
+    my @new = map { int($_) } split(//, $new_pin);
+    my @old = map { int($_) } split(//, $self->{pin});
+
+    my $rsp = $self->command_req(SEM_CMD_AUTH, 0x00, 0x01, @new, @old);
+    my $ok  = defined($rsp) && @$rsp >= 4
+              && $rsp->[0] == SEM_CMD_AUTH
+              && $rsp->[1] == 0x00
+              && $rsp->[2] == 0x00
+              && $rsp->[3] == 0x01;
+    if ($ok) {
+        $self->{pin} = $new_pin;
+        print "PIN set:      $new_pin\n";
+    } else {
+        print STDERR "ERROR: PIN change failed (check current --pin)\n";
+    }
+    return $ok;
+}
+
 # Send switch on/off command.
 # Payload: [0x03 0x00 <1|0> 0x00 0x00]
 # Reference check: rsp[0]==0x03 && rsp[2]==0 (rsp[1] is intentionally not checked).
@@ -719,6 +761,7 @@ Usage: $0 -d AA:BB:CC:DD:EE:FF [--pin NNNN] [actions] [options]
 Actions (one or more; defaults to --status --meter):
   --name          Show the device's stored name/description
     --set-name TXT  Rename device custom name (1..18 printable ASCII chars)
+    --set-pin NNNN  Change device PIN to new 4-digit PIN
   --status        Show switch state (ON/OFF)
   --meter         Show voltage, current, power, frequency, power factor
   --on            Turn socket on
