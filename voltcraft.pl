@@ -45,9 +45,11 @@ my %opts = (
     wait_notify_ms    => 3000,
 );
 
-my ($do_status, $do_meter, $do_on, $do_off, $do_toggle, $do_name) = (0) x 6;
+my ($do_status, $do_meter, $do_on, $do_off, $do_toggle, $do_name, $do_timer_get, $do_schedule_get) = (0) x 8;
 my $set_name;
 my $set_pin;
+my $timer_set;
+my $schedule_set;
 
 GetOptions(
     'device|d=s'          => \$opts{device},
@@ -64,6 +66,10 @@ GetOptions(
     'off'                 => \$do_off,
     'toggle'              => \$do_toggle,
     'name'               => \$do_name,
+    'timer-get'          => \$do_timer_get,
+    'schedule-get'       => \$do_schedule_get,
+    'timer-set=s'        => \$timer_set,
+    'set-schedule=s'     => \$schedule_set,
     'set-name=s'         => \$set_name,
     'set-pin=s'          => \$set_pin,
     'debug|v+'            => \$opts{debug},
@@ -99,7 +105,8 @@ for my $k (qw(service_uuid command_char_uuid notify_char_uuid)) {
 
 # Default: show both if nothing requested
 if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle && !$do_name
-    && !defined($set_name) && !defined($set_pin)) {
+    && !$do_timer_get && !$do_schedule_get && !defined($set_name) && !defined($set_pin)
+    && !defined($timer_set) && !defined($schedule_set)) {
     $do_status = $do_meter = 1;
 }
 
@@ -119,6 +126,24 @@ if (defined $set_pin && $set_pin !~ /^\d{4}$/) {
     exit 1;
 }
 
+if (defined $timer_set) {
+    $timer_set =~ s/[\s:]//g;
+    unless ($timer_set =~ /^[0-9A-Fa-f]{20}$/) {
+        print STDERR "Error: --timer-set expects exactly 10 bytes as hex (20 hex chars), e.g. 01080F0402041A000000\n";
+        exit 1;
+    }
+    $timer_set = lc($timer_set);
+}
+
+if (defined $schedule_set) {
+    $schedule_set =~ s/[\s:]//g;
+    unless ($schedule_set =~ /^[0-9A-Fa-f]{20}$/) {
+        print STDERR "Error: --set-schedule expects exactly 10 bytes as hex (20 hex chars), e.g. 01007F1A040114000000\n";
+        exit 1;
+    }
+    $schedule_set = lc($schedule_set);
+}
+
 my $sem = Voltcraft::SEM->new(%opts);
 exit $sem->run(
     status => $do_status,
@@ -127,6 +152,10 @@ exit $sem->run(
     off    => $do_off,
     toggle => $do_toggle,
     name   => $do_name,
+    timer_get => $do_timer_get,
+    schedule_get => $do_schedule_get,
+    timer_set => $timer_set,
+    schedule_set => $schedule_set,
     set_name => $set_name,
     set_pin  => $set_pin,
 );
@@ -167,6 +196,10 @@ use constant {
     SEM_CMD_AUTH              => 0x17,
     SEM_CMD_SWITCH            => 0x03,
     SEM_CMD_MEASURE           => 0x04,
+    SEM_CMD_TIMER_SET         => 0x08,
+    SEM_CMD_TIMER_GET         => 0x09,
+    SEM_CMD_SCHEDULE_SET      => 0x13,
+    SEM_CMD_SCHEDULE_GET      => 0x14,
 };
 
 sub new {
@@ -241,6 +274,22 @@ sub run {
             print STDERR "ERROR: Could not read device name\n";
             $rc = 1;
         }
+    }
+
+    if ($todo{timer_get}) {
+        $self->timer_get() or $rc = 1;
+    }
+
+    if (defined $todo{timer_set}) {
+        $self->timer_set_hex($todo{timer_set}) or $rc = 1;
+    }
+
+    if (defined $todo{schedule_set}) {
+        $self->schedule_set_hex($todo{schedule_set}) or $rc = 1;
+    }
+
+    if ($todo{schedule_get}) {
+        $self->schedule_get() or $rc = 1;
     }
 
     # Toggle: must measure first to learn current state, then switch.
@@ -740,6 +789,171 @@ sub switch_socket {
     return $ok;
 }
 
+# Read timer slot configuration blob.
+# Payload: [0x09 0x00 0x00 0x00]
+# Response starts with [0x09 0x00 ...].
+sub timer_get {
+    my ($self) = @_;
+    my $rsp = $self->command_req(SEM_CMD_TIMER_GET, 0x00, 0x00, 0x00);
+    my $ok  = defined($rsp) && @$rsp >= 2
+              && $rsp->[0] == SEM_CMD_TIMER_GET
+              && $rsp->[1] == 0x00;
+    unless ($ok) {
+        print STDERR "ERROR: Timer get failed\n";
+        return 0;
+    }
+
+    my @timer = @$rsp[2..$#$rsp];
+    my $raw = join('', map { sprintf('%02x', $_) } @timer);
+    print "Timer bytes:  $raw\n";
+    if (@timer == 10) {
+        my $d = $self->_decode_schedule_record(\@timer);
+        print "Timer decode:\n";
+        print "  Enabled:     $d->{enabled_text}\n";
+        print "  Action:      $d->{action_text}\n";
+        print "  Days:        $d->{days}\n";
+        print "  Time guess:  $d->{time_guess}\n";
+        print "  Byte fields: b3=$d->{b3} b4=$d->{b4} b5=$d->{b5} b6=$d->{b6} b7=$d->{b7} b8=$d->{b8} b9=$d->{b9}\n";
+    }
+    return 1;
+}
+
+# Write timer slot payload as 10 raw bytes.
+# Payload format: [0x08 0x00 <10 bytes>]
+# Success response starts with [0x08 0x00 0x00].
+sub timer_set_hex {
+    my ($self, $hex) = @_;
+    return 0 unless defined $hex;
+
+    my @bytes = map { hex($_) } ($hex =~ /../g);
+    my $rsp = $self->command_req(SEM_CMD_TIMER_SET, 0x00, @bytes);
+    my $ok  = defined($rsp) && @$rsp >= 3
+              && $rsp->[0] == SEM_CMD_TIMER_SET
+              && $rsp->[1] == 0x00
+              && $rsp->[2] == 0x00;
+    if ($ok) {
+        print "Timer set:    $hex\n";
+    } else {
+        print STDERR "ERROR: Timer set failed\n";
+    }
+    return $ok;
+}
+
+# Write one schedule record payload as 10 raw bytes.
+# Payload format: [0x13 0x00 0x00 0x00 <10 bytes>]
+# Success response starts with [0x13 0x00 0x00 0x00].
+sub schedule_set_hex {
+    my ($self, $hex) = @_;
+    return 0 unless defined $hex;
+
+    my @bytes = map { hex($_) } ($hex =~ /../g);
+    my $rsp = $self->command_req(SEM_CMD_SCHEDULE_SET, 0x00, 0x00, 0x00, @bytes);
+    my $ok  = defined($rsp) && @$rsp >= 4
+              && $rsp->[0] == SEM_CMD_SCHEDULE_SET
+              && $rsp->[1] == 0x00
+              && $rsp->[2] == 0x00
+              && $rsp->[3] == 0x00;
+    if ($ok) {
+        print "Schedule set: $hex\n";
+    } else {
+        print STDERR "ERROR: Schedule set failed\n";
+    }
+    return $ok;
+}
+
+# Read and decode schedule list.
+# Payload: [0x14 0x00 0x00 0x00]
+# Response payload shape seen in captures:
+#   [0]=0x14 [1]=0x00 [2]=count [3..]=repeating: [slot][11-byte payload]
+# where payload is [10-byte schedule fields][entry-id].
+sub schedule_get {
+    my ($self) = @_;
+    my $rsp = $self->command_req(SEM_CMD_SCHEDULE_GET, 0x00, 0x00, 0x00);
+    my $ok  = defined($rsp) && @$rsp >= 3
+              && $rsp->[0] == SEM_CMD_SCHEDULE_GET
+              && $rsp->[1] == 0x00;
+    unless ($ok) {
+        print STDERR "ERROR: Schedule get failed\n";
+        return 0;
+    }
+
+    my $count = $rsp->[2];
+    print "Schedule count: $count\n";
+    return 1 if $count == 0;
+
+    my $pos = 3;
+    for my $i (1..$count) {
+        last if $pos > $#$rsp;
+        my $slot = $rsp->[$pos++];
+        last if $pos + 10 > $#$rsp;
+
+        my @payload = @$rsp[$pos..$pos + 10];
+        $pos += 11;
+
+        my $entry_id = $payload[10];
+        my @rec = @payload[0..9];
+
+        my $d = $self->_decode_schedule_record(\@rec);
+        printf "Schedule[%d] slot=0x%02x raw=%s\n", $i, $slot, $d->{raw};
+        printf "  Entry id:    0x%02x\n", $entry_id;
+        print "  Enabled:     $d->{enabled_text}\n";
+        print "  Action:      $d->{action_text}\n";
+        print "  Days:        $d->{days}\n";
+        print "  Time guess:  $d->{time_guess}\n";
+        print "  Byte fields: b3=$d->{b3} b4=$d->{b4} b5=$d->{b5} b6=$d->{b6} b7=$d->{b7} b8=$d->{b8} b9=$d->{b9}\n";
+    }
+
+    if ($pos <= $#$rsp) {
+        my @trail = @$rsp[$pos..$#$rsp];
+        print "Schedule trailer: " . join('', map { sprintf('%02x', $_) } @trail) . "\n";
+    }
+    return 1;
+}
+
+sub _decode_schedule_record {
+    my ($self, $rec) = @_;
+    my @b = @$rec;
+    my $enabled_text = $b[0] ? 'yes' : 'no';
+    my $action_text  = _action_name($b[1]);
+    my $time_guess   = ($b[6] <= 23 && $b[7] <= 59)
+        ? sprintf('%02d:%02d (from b6:b7)', $b[6], $b[7])
+        : 'unknown';
+
+    return {
+        raw          => join('', map { sprintf('%02x', $_) } @b),
+        enabled      => $b[0],
+        enabled_text => $enabled_text,
+        action       => $b[1],
+        action_text  => $action_text,
+        days         => _days_from_mask($b[2]),
+        time_guess   => $time_guess,
+        b3           => $b[3],
+        b4           => $b[4],
+        b5           => $b[5],
+        b6           => $b[6],
+        b7           => $b[7],
+        b8           => $b[8],
+        b9           => $b[9],
+    };
+}
+
+sub _action_name {
+    my ($v) = @_;
+    return 'off' if $v == 0;
+    return 'on'  if $v == 1;
+    return sprintf('unknown(0x%02x)', $v);
+}
+
+sub _days_from_mask {
+    my ($mask) = @_;
+    my @name = qw(Mon Tue Wed Thu Fri Sat Sun);
+    my @on;
+    for my $i (0..6) {
+        push @on, $name[$i] if $mask & (1 << $i);
+    }
+    return @on ? join(',', @on) : 'none';
+}
+
 sub debug {
     my ($self, $msg) = @_;
     print "  [DEBUG] $msg\n" if $self->{debug};
@@ -761,6 +975,10 @@ Actions (one or more; defaults to --status --meter):
   --name          Show the device's stored name/description
     --set-name TXT  Rename device custom name (1..18 printable ASCII chars)
     --set-pin NNNN  Change device PIN to new 4-digit PIN
+    --timer-get     Read timer bytes (command 0x09)
+    --schedule-get  Read and decode schedule entries (command 0x14)
+    --set-schedule HEX  Write schedule as 10-byte hex (command 0x13), e.g. 01007F1A040114000000
+    --timer-set HEX Write timer bytes as 10-byte hex (command 0x08), e.g. 01080F0402041A000000
   --status        Show switch state (ON/OFF)
   --meter         Show voltage, current, power, frequency, power factor
   --on            Turn socket on

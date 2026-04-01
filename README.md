@@ -41,6 +41,10 @@ If no action is given, `--status --meter` is the default.
 | `--name` | Print the stored/custom device name (with BLE name fallback) |
 | `--set-name TXT` | Set custom device name (1..18 printable ASCII chars) |
 | `--set-pin NNNN` | Change device PIN to a new 4-digit PIN |
+| `--timer-get` | Read timer bytes (timer command `0x09`) |
+| `--schedule-get` | Read and decode schedule entries (schedule command `0x14`) |
+| `--set-schedule HEX` | Write one schedule record as 10-byte hex payload (schedule command `0x13`) |
+| `--timer-set HEX` | Write timer bytes as 10-byte hex payload (timer command `0x08`) |
 
 ### Options
 
@@ -93,6 +97,18 @@ Only needed if your device firmware differs from the standard SEM-6000 profile.
 
 # Change PIN from 0000 to 1234
 ./voltcraft.pl -d B3:00:00:00:73:C0 --pin 0000 --set-pin 1234
+
+# Read timer bytes
+./voltcraft.pl -d B3:00:00:00:73:C0 --timer-get
+
+# Read and decode schedule entries
+./voltcraft.pl -d B3:00:00:00:73:C0 --schedule-get
+
+# Add/update a schedule record (example: OFF at 20:00 daily)
+./voltcraft.pl -d B3:00:00:00:73:C0 --set-schedule 01007F1A040114000000
+
+# Set timer bytes captured from app traffic
+./voltcraft.pl -d B3:00:00:00:73:C0 --timer-set 01080F0402041A000000
 ```
 
 ## Security
@@ -131,6 +147,8 @@ All communication uses BLE ATT over a raw Linux L2CAP socket (CID 4). Responses 
 | Set name | `0x02 0x00 <name bytes padded to 18> 0x00 0x00` |
 | Change PIN | `0x17 0x00 0x01 <new p0 p1 p2 p3> <old p0 p1 p2 p3>` |
 | Measurement | `0x04 0x00 0x00 0x00` |
+| Timer get | `0x09 0x00 0x00 0x00` |
+| Timer set | `0x08 0x00 <10 raw timer bytes>` |
 | Switch ON | `0x03 0x00 0x01 0x00 0x00` |
 | Switch OFF | `0x03 0x00 0x00 0x00 0x00` |
 
