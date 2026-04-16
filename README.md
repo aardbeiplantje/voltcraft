@@ -43,6 +43,7 @@ If no action is given, `--status --meter` is the default.
 | `--set-pin NNNN` | Change device PIN to a new 4-digit PIN |
 | `--timer-get` | Read timer bytes (timer command `0x09`) |
 | `--schedule-get` | Read and decode schedule entries (schedule command `0x14`) |
+| `--time-get` | Read current-time payload bytes (time command `0x10`) |
 | `--set-schedule HEX` | Write one schedule record as 10-byte hex payload (schedule command `0x13`) |
 | `--timer-set HEX` | Write timer bytes as 10-byte hex payload (timer command `0x08`) |
 
@@ -103,6 +104,9 @@ Only needed if your device firmware differs from the standard SEM-6000 profile.
 
 # Read and decode schedule entries
 ./voltcraft.pl -d B3:00:00:00:73:C0 --schedule-get
+
+# Read current-time bytes (raw/tentative decode)
+./voltcraft.pl -d B3:00:00:00:73:C0 --time-get
 
 # Add/update a schedule record (example: OFF at 20:00 daily)
 ./voltcraft.pl -d B3:00:00:00:73:C0 --set-schedule 01007F1A040114000000

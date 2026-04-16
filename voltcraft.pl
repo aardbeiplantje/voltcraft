@@ -45,7 +45,7 @@ my %opts = (
     wait_notify_ms    => 3000,
 );
 
-my ($do_status, $do_meter, $do_on, $do_off, $do_toggle, $do_name, $do_timer_get, $do_schedule_get) = (0) x 8;
+my ($do_status, $do_meter, $do_on, $do_off, $do_toggle, $do_name, $do_timer_get, $do_schedule_get, $do_time_get) = (0) x 9;
 my $set_name;
 my $set_pin;
 my $timer_set;
@@ -68,6 +68,7 @@ GetOptions(
     'name'               => \$do_name,
     'timer-get'          => \$do_timer_get,
     'schedule-get'       => \$do_schedule_get,
+    'time-get'           => \$do_time_get,
     'timer-set=s'        => \$timer_set,
     'set-schedule=s'     => \$schedule_set,
     'set-name=s'         => \$set_name,
@@ -105,7 +106,7 @@ for my $k (qw(service_uuid command_char_uuid notify_char_uuid)) {
 
 # Default: show both if nothing requested
 if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle && !$do_name
-    && !$do_timer_get && !$do_schedule_get && !defined($set_name) && !defined($set_pin)
+    && !$do_timer_get && !$do_schedule_get && !$do_time_get && !defined($set_name) && !defined($set_pin)
     && !defined($timer_set) && !defined($schedule_set)) {
     $do_status = $do_meter = 1;
 }
@@ -154,6 +155,7 @@ exit $sem->run(
     name   => $do_name,
     timer_get => $do_timer_get,
     schedule_get => $do_schedule_get,
+    time_get => $do_time_get,
     timer_set => $timer_set,
     schedule_set => $schedule_set,
     set_name => $set_name,
@@ -198,6 +200,7 @@ use constant {
     SEM_CMD_MEASURE           => 0x04,
     SEM_CMD_TIMER_SET         => 0x08,
     SEM_CMD_TIMER_GET         => 0x09,
+    SEM_CMD_TIME_GET          => 0x10,
     SEM_CMD_SCHEDULE_SET      => 0x13,
     SEM_CMD_SCHEDULE_GET      => 0x14,
 };
@@ -290,6 +293,10 @@ sub run {
 
     if ($todo{schedule_get}) {
         $self->schedule_get() or $rc = 1;
+    }
+
+    if ($todo{time_get}) {
+        $self->time_get() or $rc = 1;
     }
 
     # Toggle: must measure first to learn current state, then switch.
@@ -861,6 +868,27 @@ sub schedule_set_hex {
     return $ok;
 }
 
+# Read device current-time payload.
+# Payload: [0x10 0x00 0x00 0x00]
+# Observed response starts with [0x10 0x00 ...].
+sub time_get {
+    my ($self) = @_;
+    my $rsp = $self->command_req(SEM_CMD_TIME_GET, 0x00, 0x00, 0x00);
+    my $ok  = defined($rsp) && @$rsp >= 3
+              && $rsp->[0] == SEM_CMD_TIME_GET
+              && $rsp->[1] == 0x00;
+    unless ($ok) {
+        print STDERR "ERROR: Time get failed\n";
+        return 0;
+    }
+
+    my @tb = @$rsp[2..$#$rsp];
+    print "Time bytes:   " . join('', map { sprintf('%02x', $_) } @tb) . "\n";
+    print "Time fields:  " . join(' ', map { sprintf('t%d=%d', $_, $tb[$_]) } 0..$#tb) . "\n";
+    print "Note: field mapping is not fully reverse-engineered yet.\n";
+    return 1;
+}
+
 # Read and decode schedule list.
 # Payload: [0x14 0x00 0x00 0x00]
 # Response payload shape seen in captures:
@@ -977,6 +1005,7 @@ Actions (one or more; defaults to --status --meter):
     --set-pin NNNN  Change device PIN to new 4-digit PIN
     --timer-get     Read timer bytes (command 0x09)
     --schedule-get  Read and decode schedule entries (command 0x14)
+    --time-get      Read device current-time bytes (command 0x10)
     --set-schedule HEX  Write schedule as 10-byte hex (command 0x13), e.g. 01007F1A040114000000
     --timer-set HEX Write timer bytes as 10-byte hex (command 0x08), e.g. 01080F0402041A000000
   --status        Show switch state (ON/OFF)
