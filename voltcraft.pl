@@ -20,18 +20,14 @@
 #   Measurement: 0x04 0x00 0x00 0x00
 #   Switch:      0x03 0x00 <0x01|0x00> 0x00 0x00
 #
-# Usage:
-#   ./voltcraft.pl -d AA:BB:CC:DD:EE:FF [--pin 0000] --status
-#   ./voltcraft.pl -d AA:BB:CC:DD:EE:FF [--pin 0000] --meter
-#   ./voltcraft.pl -d AA:BB:CC:DD:EE:FF [--pin 0000] --on
-#   ./voltcraft.pl -d AA:BB:CC:DD:EE:FF [--pin 0000] --off
-#   ./voltcraft.pl -d AA:BB:CC:DD:EE:FF [--pin 0000] --toggle
+# Usage: ./voltcraft.pl --help (or --man for the full manual page)
 #
 
 use strict;
 use warnings;
 use bytes;
 use Getopt::Long;
+use Pod::Usage;
 
 my %opts = (
     device            => undef,
@@ -74,13 +70,13 @@ GetOptions(
     'set-name=s'         => \$set_name,
     'set-pin=s'          => \$set_pin,
     'debug|v+'            => \$opts{debug},
-    'help|h'              => sub { print_usage(); exit 0; },
-) or do { print_usage(); exit 1; };
+    'help|h'              => sub { pod2usage(-verbose => 1, -exitval => 0, -output => \*STDOUT); },
+    'man'                 => sub { pod2usage(-verbose => 2, -exitval => 0, -output => \*STDOUT, -noperldoc => 1); },
+) or pod2usage(-verbose => 0, -exitval => 1, -output => \*STDERR);
 
 unless ($opts{device}) {
     print STDERR "Error: -d / --device is required\n";
-    print_usage();
-    exit 1;
+    pod2usage(-verbose => 0, -exitval => 1, -output => \*STDERR);
 }
 unless ($opts{device} =~ /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/) {
     print STDERR "Error: Invalid Bluetooth address format\n";
@@ -995,47 +991,166 @@ sub debug {
 
 package main;
 
-sub print_usage {
-    print <<"EOF";
-Usage: $0 -d AA:BB:CC:DD:EE:FF [--pin NNNN] [actions] [options]
+__END__
 
-Actions (one or more; defaults to --status --meter):
-  --name          Show the device's stored name/description
-    --set-name TXT  Rename device custom name (1..18 printable ASCII chars)
-    --set-pin NNNN  Change device PIN to new 4-digit PIN
-    --timer-get     Read timer bytes (command 0x09)
-    --schedule-get  Read and decode schedule entries (command 0x14)
-    --time-get      Read device current-time bytes (command 0x10)
-    --set-schedule HEX  Write schedule as 10-byte hex (command 0x13), e.g. 01007F1A040114000000
-    --timer-set HEX Write timer bytes as 10-byte hex (command 0x08), e.g. 01080F0402041A000000
-  --status        Show switch state (ON/OFF)
-  --meter         Show voltage, current, power, frequency, power factor
-  --on            Turn socket on
-  --off           Turn socket off
-  --toggle        Toggle socket state
+=head1 NAME
 
-Required:
-  -d, --device ADDR       BLE MAC address
+voltcraft.pl - BLE controller for the Voltcraft SEM-6000 wall socket meter/switch
 
-Options:
-  --pin NNNN              4-digit PIN (default: 0000)
-  --addr-type TYPE        public|random (default: public)
-  --connect-timeout SEC   Connect timeout in seconds (default: 5)
-  --wait-notify-ms N      Max ms to wait per notification chunk (default: 3000)
-  -v, --debug             Verbose output (repeat for hex dumps)
-  -h, --help              Show this help
+=head1 SYNOPSIS
 
-GATT UUID overrides (4-hex-digit):
-  --service-uuid UUID       Service UUID (default: fff0)
-  --command-char-uuid UUID  Command characteristic (default: fff3)
-  --notify-char-uuid UUID   Notify characteristic (default: fff4)
+  voltcraft.pl -d AA:BB:CC:DD:EE:FF [--pin NNNN] [actions] [options]
+  voltcraft.pl --help
+  voltcraft.pl --man
 
-Examples:
-  $0 -d B3:00:00:00:73:C0 --status
-  $0 -d B3:00:00:00:73:C0 --meter
-  $0 -d B3:00:00:00:73:C0 --pin 1234 --on
-  $0 -d B3:00:00:00:73:C0 --toggle
-  $0 -d B3:00:00:00:73:C0 --status --meter -v
-EOF
-}
+=head1 DESCRIPTION
+
+Connects over Bluetooth LE to a Voltcraft SEM-6000 and reads its switch state
+and meter values, switches the socket on, off or toggles it, and reads or
+writes the device name, PIN, timer and schedule.
+
+With no action given, B<--status> and B<--meter> are shown.
+
+The packet framing and command layout are documented in the comments at the
+top of the script.
+
+=head1 OPTIONS
+
+=head2 Actions
+
+One or more may be given. Defaults to B<--status --meter>.
+
+=over 4
+
+=item B<--name>
+
+Show the device's stored name/description.
+
+=item B<--set-name> I<TXT>
+
+Rename the device's custom name (1..18 printable ASCII characters).
+
+=item B<--set-pin> I<NNNN>
+
+Change the device PIN to a new 4-digit PIN.
+
+=item B<--timer-get>
+
+Read timer bytes (command 0x09).
+
+=item B<--schedule-get>
+
+Read and decode schedule entries (command 0x14).
+
+=item B<--time-get>
+
+Read the device's current-time bytes (command 0x10).
+
+=item B<--set-schedule> I<HEX>
+
+Write the schedule as 10 bytes of hex (command 0x13), e.g.
+C<01007F1A040114000000>.
+
+=item B<--timer-set> I<HEX>
+
+Write the timer as 10 bytes of hex (command 0x08), e.g.
+C<01080F0402041A000000>.
+
+=item B<--status>
+
+Show switch state (ON/OFF).
+
+=item B<--meter>
+
+Show voltage, current, power, frequency and power factor.
+
+=item B<--on>
+
+Turn the socket on.
+
+=item B<--off>
+
+Turn the socket off.
+
+=item B<--toggle>
+
+Toggle the socket state.
+
+=back
+
+=head2 Required
+
+=over 4
+
+=item B<-d>, B<--device> I<ADDR>
+
+BLE MAC address of the device, e.g. C<AA:BB:CC:DD:EE:FF>.
+
+=back
+
+=head2 Options
+
+=over 4
+
+=item B<--pin> I<NNNN>
+
+4-digit PIN (default: 0000).
+
+=item B<--addr-type> I<TYPE>
+
+C<public> or C<random> (default: public).
+
+=item B<--connect-timeout> I<SEC>
+
+Connect timeout in seconds (default: 5).
+
+=item B<--wait-notify-ms> I<N>
+
+Maximum milliseconds to wait per notification chunk (default: 3000).
+
+=item B<-v>, B<--debug>
+
+Verbose output. Repeat for hex dumps.
+
+=item B<-h>, B<--help>
+
+Show a short usage summary and exit.
+
+=item B<--man>
+
+Show this full manual page and exit.
+
+=back
+
+=head2 GATT UUID overrides
+
+All are 4-hex-digit UUID16 values.
+
+=over 4
+
+=item B<--service-uuid> I<UUID>
+
+Service UUID (default: fff0).
+
+=item B<--command-char-uuid> I<UUID>
+
+Command characteristic (default: fff3).
+
+=item B<--notify-char-uuid> I<UUID>
+
+Notify characteristic (default: fff4).
+
+=back
+
+=head1 EXAMPLES
+
+  voltcraft.pl -d B3:00:00:00:73:C0 --status
+  voltcraft.pl -d B3:00:00:00:73:C0 --meter
+  voltcraft.pl -d B3:00:00:00:73:C0 --pin 1234 --on
+  voltcraft.pl -d B3:00:00:00:73:C0 --toggle
+  voltcraft.pl -d B3:00:00:00:73:C0 --status --meter -v
+
+=head1 SEE ALSO
+
+Protocol reference: L<https://github.com/Heckie75/voltcraft-sem-6000/blob/master/sem-6000.exp>
 
