@@ -7,10 +7,10 @@
 
 ## Device safety
 
-- Never switch a device: no `--off` or `--toggle`, and no other action that powers a socket off. `--on` is allowed only on KINGLAMP (`B3:00:00:00:73:C0`) when the user asks for it.
-- Exception: the test lamp (a less bright lamp, address kept out of this file) may be switched on and off with `--on` and `--off` when the user asks for an on/off test. Use it for that test only.
+- Two lamps may run any command, including writes and `--off`: KINGLAMP (`B3:00:00:00:73:C0`) and the test lamp (a less bright lamp, address kept out of this file).
+- KINGLAMP must never be powered on: no `--on` on KINGLAMP, even when asked. It is too bright.
 - Read-only actions (`--status`, `--meter`, `--name`, `--*-get`) may run against any listed device.
-- Debugging (`-v`) and every write (`--set-*`, `--timer-set`, `--set-schedule`, `--time-set`, `--on`) run against KINGLAMP only, except `--on` and `--off` on the test lamp as above.
+- Debugging (`-v`) and writes (`--set-*`, `--timer-set`, `--set-schedule`, `--time-set`) run against the two lamps only.
 - Do not put real device MAC addresses in tracked files. Use the placeholder `AA:BB:CC:DD:EE:FF`.
 
 ## BLE sniffer test (nRF sniffer dongle)
