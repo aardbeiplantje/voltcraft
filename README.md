@@ -73,46 +73,46 @@ Only needed if your device firmware differs from the standard SEM-6000 profile.
 
 ```bash
 # Read switch state and meter (default)
-./voltcraft.pl -d B3:00:00:00:73:C0
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF
 
 # Read only switch state
-./voltcraft.pl -d B3:00:00:00:73:C0 --status
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --status
 
 # Read only meter data
-./voltcraft.pl -d B3:00:00:00:73:C0 --meter
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --meter
 
 # Turn on
-./voltcraft.pl -d B3:00:00:00:73:C0 --on
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --on
 
 # Turn off with non-default PIN
-./voltcraft.pl -d B3:00:00:00:73:C0 --pin 1234 --off
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --pin 1234 --off
 
 # Toggle with debug output
-./voltcraft.pl -d B3:00:00:00:73:C0 --toggle -v
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --toggle -v
 
 # Read name and meter
-./voltcraft.pl -d B3:00:00:00:73:C0 --name --meter
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --name --meter
 
 # Rename device
-./voltcraft.pl -d B3:00:00:00:73:C0 --pin 0000 --set-name "bureau Cindu"
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --pin 0000 --set-name "bureau Cindu"
 
 # Change PIN from 0000 to 1234
-./voltcraft.pl -d B3:00:00:00:73:C0 --pin 0000 --set-pin 1234
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --pin 0000 --set-pin 1234
 
 # Read timer bytes
-./voltcraft.pl -d B3:00:00:00:73:C0 --timer-get
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --timer-get
 
 # Read and decode schedule entries
-./voltcraft.pl -d B3:00:00:00:73:C0 --schedule-get
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --schedule-get
 
 # Read current-time bytes (raw/tentative decode)
-./voltcraft.pl -d B3:00:00:00:73:C0 --time-get
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --time-get
 
 # Add/update a schedule record (example: OFF at 20:00 daily)
-./voltcraft.pl -d B3:00:00:00:73:C0 --set-schedule 01007F1A040114000000
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --set-schedule 01007F1A040114000000
 
 # Set timer bytes captured from app traffic
-./voltcraft.pl -d B3:00:00:00:73:C0 --timer-set 01080F0402041A000000
+./voltcraft.pl -d AA:BB:CC:DD:EE:FF --timer-set 01080F0402041A000000
 ```
 
 ## Security
