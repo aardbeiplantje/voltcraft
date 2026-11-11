@@ -70,13 +70,13 @@ GetOptions(
     'set-name=s'         => \$set_name,
     'set-pin=s'          => \$set_pin,
     'debug|v+'            => \$opts{debug},
-    'help|h'              => sub { pod2usage(-verbose => 1, -exitval => 0, -output => \*STDOUT); },
-    'man'                 => sub { pod2usage(-verbose => 2, -exitval => 0, -output => \*STDOUT, -noperldoc => 1); },
-) or pod2usage(-verbose => 0, -exitval => 1, -output => \*STDERR);
+    'help|h'              => sub { show_manual(); },
+    'man'                 => sub { show_man(); },
+) or usage_error();
 
 unless ($opts{device}) {
     print STDERR "Error: -d / --device is required\n";
-    pod2usage(-verbose => 0, -exitval => 1, -output => \*STDERR);
+    usage_error();
 }
 unless ($opts{device} =~ /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/) {
     print STDERR "Error: Invalid Bluetooth address format\n";
@@ -991,6 +991,57 @@ sub debug {
 
 package main;
 
+# The POD below is the only manual. --help shows all of it as plain text; --man formats
+# the same POD as a man page (pod2man, shown with man(1)). A bad command line shows only
+# the SYNOPSIS and exits 1.
+sub show_manual {
+    require Pod::Usage;
+    # -noperldoc: render the POD here, so it works without the perl-doc package (perldoc
+    # would otherwise print the raw script when it is missing).
+    Pod::Usage::pod2usage(-verbose => 2, -exitval => 0, -noperldoc => 1);
+}
+
+# --man: pod2man the POD and show it with man(1). Falls back to show_manual() when no
+# working man(1) is found (a man that exits 0 without rendering a page is not trusted).
+sub show_man {
+    require Pod::Man;
+    require File::Temp;
+    my $roff = '';
+    my $pm = Pod::Man->new(section => 1, center => 'Voltcraft tools', release => 'voltcraft.pl',
+                           name => 'VOLTCRAFT');
+    $pm->output_string(\$roff);
+    $pm->parse_file($0);
+
+    my (undef, $file) = File::Temp::tempfile(SUFFIX => '.1', UNLINK => 1);
+    open my $fh, '>', $file or return show_manual();
+    print {$fh} $roff;
+    close $fh;
+
+    return show_manual() unless grep { -x "$_/man" } split /:/, ($ENV{PATH} // '');
+
+    # Check that man renders the page (look for the NAME heading) before using it.
+    my $text = '';
+    if (open my $man, '-|', 'man', '-l', $file) {
+        local $/;
+        $text = <$man> // '';
+        close $man;
+    }
+    return show_manual() unless $text =~ /^NAME\s*$/m;
+
+    if (-t STDOUT) {
+        # Interactive: let man page through the terminal.
+        system('man', '-l', $file);
+    } else {
+        print $text;
+    }
+    exit 0;
+}
+
+sub usage_error {
+    require Pod::Usage;
+    Pod::Usage::pod2usage(-verbose => 0, -exitval => 1, -output => \*STDERR);
+}
+
 __END__
 
 =head1 NAME
@@ -1005,18 +1056,16 @@ voltcraft.pl - BLE controller for the Voltcraft SEM-6000 wall socket meter/switc
 
 =head1 DESCRIPTION
 
-Connects over Bluetooth LE to a Voltcraft SEM-6000 and reads its switch state
-and meter values, switches the socket on, off or toggles it, and reads or
-writes the device name, PIN, timer and schedule.
+Connects over Bluetooth LE to a Voltcraft SEM-6000 and reads its switch state and meter
+values, switches the socket on, off or toggles it, and reads or writes the device name,
+PIN, timer and schedule.
 
 With no action given, B<--status> and B<--meter> are shown.
 
-The packet framing and command layout are documented in the comments at the
-top of the script.
+The packet framing and command layout are documented in the comments at the top of the
+script.
 
-=head1 OPTIONS
-
-=head2 Actions
+=head1 ACTIONS
 
 One or more may be given. Defaults to B<--status --meter>.
 
@@ -1048,13 +1097,11 @@ Read the device's current-time bytes (command 0x10).
 
 =item B<--set-schedule> I<HEX>
 
-Write the schedule as 10 bytes of hex (command 0x13), e.g.
-C<01007F1A040114000000>.
+Write the schedule as 10 bytes of hex (command 0x13), e.g. C<01007F1A040114000000>.
 
 =item B<--timer-set> I<HEX>
 
-Write the timer as 10 bytes of hex (command 0x08), e.g.
-C<01080F0402041A000000>.
+Write the timer as 10 bytes of hex (command 0x08), e.g. C<01080F0402041A000000>.
 
 =item B<--status>
 
@@ -1077,6 +1124,8 @@ Turn the socket off.
 Toggle the socket state.
 
 =back
+
+=head1 OPTIONS
 
 =head2 Required
 
@@ -1114,11 +1163,11 @@ Verbose output. Repeat for hex dumps.
 
 =item B<-h>, B<--help>
 
-Show a short usage summary and exit.
+Show this manual as plain text and exit.
 
 =item B<--man>
 
-Show this full manual page and exit.
+Show this manual as a man page (pod2man, shown with man(1)) and exit.
 
 =back
 
@@ -1144,13 +1193,22 @@ Notify characteristic (default: fff4).
 
 =head1 EXAMPLES
 
+  # switch state and meter values
   voltcraft.pl -d B3:00:00:00:73:C0 --status
   voltcraft.pl -d B3:00:00:00:73:C0 --meter
+
+  # switch on with a PIN
   voltcraft.pl -d B3:00:00:00:73:C0 --pin 1234 --on
-  voltcraft.pl -d B3:00:00:00:73:C0 --toggle
-  voltcraft.pl -d B3:00:00:00:73:C0 --status --meter -v
+
+  # toggle, with verbose protocol trace
+  voltcraft.pl -d B3:00:00:00:73:C0 --toggle -v
+
+  # status and meter together, with hex dumps
+  voltcraft.pl -d B3:00:00:00:73:C0 --status --meter -vv
 
 =head1 SEE ALSO
 
-Protocol reference: L<https://github.com/Heckie75/voltcraft-sem-6000/blob/master/sem-6000.exp>
+The protocol reference:
+L<https://github.com/Heckie75/voltcraft-sem-6000/blob/master/sem-6000.exp>.
 
+=cut
