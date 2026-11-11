@@ -46,6 +46,8 @@ my $set_name;
 my $set_pin;
 my $timer_set;
 my $schedule_set;
+my $time_set;
+my $probe_get;
 
 GetOptions(
     'device|d=s'          => \$opts{device},
@@ -67,6 +69,8 @@ GetOptions(
     'time-get'           => \$do_time_get,
     'timer-set=s'        => \$timer_set,
     'set-schedule=s'     => \$schedule_set,
+    'time-set=s'        => \$time_set,
+    'probe-get=s'       => \$probe_get,
     'set-name=s'         => \$set_name,
     'set-pin=s'          => \$set_pin,
     'debug|v+'            => \$opts{debug},
@@ -103,7 +107,8 @@ for my $k (qw(service_uuid command_char_uuid notify_char_uuid)) {
 # Default: show both if nothing requested
 if (!$do_status && !$do_meter && !$do_on && !$do_off && !$do_toggle && !$do_name
     && !$do_timer_get && !$do_schedule_get && !$do_time_get && !defined($set_name) && !defined($set_pin)
-    && !defined($timer_set) && !defined($schedule_set)) {
+    && !defined($timer_set) && !defined($schedule_set) && !defined($time_set)
+    && !defined($probe_get)) {
     $do_status = $do_meter = 1;
 }
 
@@ -132,6 +137,32 @@ if (defined $timer_set) {
     $timer_set = lc($timer_set);
 }
 
+if (defined $time_set) {
+    unless ($time_set =~ /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/) {
+        print STDERR "Error: --time-set expects \"YYYY-MM-DD HH:MM:SS\"\n";
+        exit 1;
+    }
+    my @t = ($1, $2, $3, $4, $5, $6);
+    my ($y, $mo, $d, $h, $mi, $se) = @t;
+    unless ($y >= 2000 && $y <= 2099 && $mo >= 1 && $mo <= 12 && $d >= 1 && $d <= 31
+            && $h <= 23 && $mi <= 59 && $se <= 59) {
+        print STDERR "Error: --time-set has a value out of range\n";
+        exit 1;
+    }
+    $time_set = \@t;
+}
+
+if (defined $probe_get) {
+    # Read-only commands seen in the captures (all use a 4-byte 00-padded payload).
+    my $c = lc $probe_get;
+    $c =~ s/^0x//;
+    unless ($c =~ /^(?:04|09|0c|10|14)$/) {
+        print STDERR "Error: --probe-get accepts only read commands 04, 09, 0c, 10, 14\n";
+        exit 1;
+    }
+    $probe_get = hex $c;
+}
+
 if (defined $schedule_set) {
     $schedule_set =~ s/[\s:]//g;
     unless ($schedule_set =~ /^[0-9A-Fa-f]{20}$/) {
@@ -154,6 +185,8 @@ exit $sem->run(
     time_get => $do_time_get,
     timer_set => $timer_set,
     schedule_set => $schedule_set,
+    time_set => $time_set,
+    probe_get => $probe_get,
     set_name => $set_name,
     set_pin  => $set_pin,
 );
@@ -191,6 +224,7 @@ use constant {
 
     # SEM-6000 command payload IDs
     SEM_CMD_GET_NAME          => 0x01,
+    SEM_CMD_TIME_SET          => 0x01,
     SEM_CMD_AUTH              => 0x17,
     SEM_CMD_SWITCH            => 0x03,
     SEM_CMD_MEASURE           => 0x04,
@@ -289,6 +323,14 @@ sub run {
 
     if ($todo{schedule_get}) {
         $self->schedule_get() or $rc = 1;
+    }
+
+    if (defined $todo{time_set}) {
+        $self->time_set(@{$todo{time_set}}) or $rc = 1;
+    }
+
+    if (defined $todo{probe_get}) {
+        $self->probe_get($todo{probe_get}) or $rc = 1;
     }
 
     if ($todo{time_get}) {
@@ -864,6 +906,40 @@ sub schedule_set_hex {
     return $ok;
 }
 
+# Write the device clock.
+# Payload: [0x01 0x00 sec min hour day month year_hi year_lo 0x00 0x00]
+# Layout taken from the companion app's frame in cap1/cap2 (11-byte payload);
+# success response starts with [0x01 0x00 0x00 0x00].
+sub time_set {
+    my ($self, $y, $mo, $d, $h, $mi, $se) = @_;
+    my $rsp = $self->command_req(SEM_CMD_TIME_SET, 0x00,
+                                 $se, $mi, $h, $d, $mo, ($y >> 8) & 0xFF, $y & 0xFF, 0x00, 0x00);
+    my $ok  = defined($rsp) && @$rsp >= 3
+              && $rsp->[0] == SEM_CMD_TIME_SET
+              && $rsp->[1] == 0x00
+              && $rsp->[2] == 0x00;
+    if ($ok) {
+        printf "Time set:     %04d-%02d-%02d %02d:%02d:%02d\n", $y, $mo, $d, $h, $mi, $se;
+    } else {
+        print STDERR "ERROR: Time set failed\n";
+    }
+    return $ok;
+}
+
+# Send one read command with a 00-padded payload and print the raw reply.
+# Only for investigating captures; the caller limits this to read-only commands.
+sub probe_get {
+    my ($self, $cmd) = @_;
+    my $rsp = $self->command_req($cmd, 0x00, 0x00, 0x00);
+    unless (defined $rsp) {
+        print STDERR sprintf("ERROR: Probe 0x%02x failed\n", $cmd);
+        return 0;
+    }
+    print sprintf("Probe 0x%02x reply (%d bytes): ", $cmd, scalar @$rsp)
+        . join('', map { sprintf('%02x', $_) } @$rsp) . "\n";
+    return 1;
+}
+
 # Read device current-time payload.
 # Payload: [0x10 0x00 0x00 0x00]
 # Observed response starts with [0x10 0x00 ...].
@@ -1042,6 +1118,10 @@ Read timer bytes (command 0x09).
 =item B<--schedule-get>
 
 Read and decode schedule entries (command 0x14).
+
+=item B<--time-set> I<"YYYY-MM-DD HH:MM:SS">
+
+Write the device's clock (command 0x01, 11-byte payload).
 
 =item B<--time-get>
 
