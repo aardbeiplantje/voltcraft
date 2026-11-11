@@ -17,7 +17,7 @@ Perl script for controlling a **Voltcraft SEM-6000** smart wall socket via Bluet
 ## Requirements
 
 - Linux with BlueZ kernel support (`AF_BLUETOOTH`/`BTPROTO_L2CAP`)
-- Perl 5 (core modules only: `Getopt::Long` and `Pod::Usage`)
+- Perl 5 (core modules only: `Getopt::Long`, `Pod::Usage` and `Time::HiRes`)
 - BLE adapter visible to the kernel (e.g. `hciconfig hci0 up`)
 - The BLE address and PIN of your SEM-6000 device (default PIN: `0000`)
 
@@ -58,7 +58,8 @@ The full manual is the POD at the end of `voltcraft.pl`. `--help` and `--man` bo
 | `--addr-type TYPE` | `public` | BLE address type: `public` or `random` |
 | `--connect-timeout SEC` | `5` | Connection timeout in seconds |
 | `--wait-notify-ms N` | `3000` | Max wait for a notification response (ms) |
-| `-v`, `--debug` | off | Verbose output; repeat (`-vv`) for raw hex dumps |
+| `-v`, `--debug` | off | Verbose output; repeat (`-v -v`) for raw hex dumps |
+| `--log FILE` | off | Append timestamped connect, TX and RX lines (epoch seconds.microseconds, device address) to FILE, for matching with a sniffer capture |
 | `-h`, `--help` | | Show the full manual as plain text |
 | `--man` | | Show the full manual (same as `--help`) |
 

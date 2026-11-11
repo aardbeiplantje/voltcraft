@@ -28,6 +28,7 @@ use warnings;
 use bytes;
 use Getopt::Long;
 use Pod::Usage;
+use Time::HiRes qw(gettimeofday);
 
 my %opts = (
     device            => undef,
@@ -39,6 +40,7 @@ my %opts = (
     command_char_uuid => 'fff3',
     notify_char_uuid  => 'fff4',
     wait_notify_ms    => 3000,
+    log_file          => undef,
 );
 
 my ($do_status, $do_meter, $do_on, $do_off, $do_toggle, $do_name, $do_timer_get, $do_schedule_get, $do_time_get) = (0) x 9;
@@ -74,6 +76,7 @@ GetOptions(
     'set-name=s'         => \$set_name,
     'set-pin=s'          => \$set_pin,
     'debug|v+'            => \$opts{debug},
+    'log=s'               => \$opts{log_file},
     'help|h'              => sub { pod2usage(-verbose => 2, -exitval => 0, -noperldoc => 1); },
     'man'                 => sub { pod2usage(-verbose => 2, -exitval => 0, -noperldoc => 1); },
 ) or pod2usage(-verbose => 0, -exitval => 1, -output => \*STDERR);
@@ -243,6 +246,7 @@ sub new {
         addr_type       => lc($o{addr_type} // 'public'),
         connect_timeout => $o{connect_timeout} // 5,
         debug           => $o{debug} // 0,
+        log_file        => $o{log_file},
 
         service_uuid    => hex($o{service_uuid}),
         command_uuid    => hex($o{command_char_uuid}),
@@ -393,6 +397,7 @@ sub ble_connect {
     my $peer = pack('S S a6 S S', AF_BLUETOOTH, 0, $bdaddr, 4, $atype);
     fcntl($sock, F_SETFL, fcntl($sock, F_GETFL, 0) | O_NONBLOCK);
 
+    $self->log_event("CONNECT start addr=$self->{device} type=$self->{addr_type}");
     my $connected = connect($sock, $peer);
     if (!$connected && !($! == EINPROGRESS || $! == EAGAIN)) {
         $self->debug("connect() immediate fail: $!");
@@ -422,6 +427,7 @@ sub ble_connect {
 
     fcntl($sock, F_SETFL, fcntl($sock, F_GETFL, 0) & ~O_NONBLOCK);
     $self->{socket} = $sock;
+    $self->log_event('CONNECTED');
     return 1;
 }
 
@@ -551,6 +557,7 @@ sub command_req {
 
     my $pkt = _build_packet(@payload);
     $self->debug('TX: ' . join(' ', map { sprintf '%02X', $_ } unpack('C*', $pkt)));
+    $self->log_event('TX ' . join(' ', map { sprintf '%02X', $_ } unpack('C*', $pkt)));
 
     syswrite($self->{socket}, pack('C S<', ATT_WRITE_CMD, $self->{handle_command}) . $pkt)
         or return;
@@ -579,6 +586,7 @@ sub command_req {
         # [op(1)][handle(2)][value...] — append value bytes to accumulation buffer
         push @buf, unpack('C*', substr($raw, 3));
         $self->debug('RX chunk: ' . join(' ', map { sprintf '%02X', $_ } unpack('C*', substr($raw, 3))));
+        $self->log_event('RX ' . join(' ', map { sprintf '%02X', $_ } unpack('C*', substr($raw, 3))));
 
         next unless @buf >= 2 && $buf[0] == 0x0F;
         # Frame complete when: 2 header bytes + (LEN-1) payload + 1 CHK = LEN+2 bytes total
@@ -1054,6 +1062,17 @@ sub _days_from_mask {
     return @on ? join(',', @on) : 'none';
 }
 
+# Append one timestamped line to the --log file: epoch seconds.microseconds,
+# device address and event. Timestamps match the sniffer pcap's frame.time_epoch.
+sub log_event {
+    my ($self, $msg) = @_;
+    return unless defined $self->{log_file};
+    open my $fh, '>>', $self->{log_file} or return;
+    my ($sec, $usec) = Time::HiRes::gettimeofday();
+    printf {$fh} "%d.%06d %s %s\n", $sec, $usec, $self->{device}, $msg;
+    close $fh;
+}
+
 sub debug {
     my ($self, $msg) = @_;
     print "  [DEBUG] $msg\n" if $self->{debug};
@@ -1192,6 +1211,10 @@ Maximum milliseconds to wait per notification chunk (default: 3000).
 =item B<-v>, B<--debug>
 
 Verbose output. Repeat for hex dumps.
+
+=item B<--log> I<FILE>
+
+Append one line per event to FILE: connect start and result, every command written (TX) and every response chunk (RX). Each line has epoch time with microseconds (matches the sniffer pcap timestamps), the device address, and the event.
 
 =item B<-h>, B<--help>
 
